@@ -1,0 +1,2 @@
+# raggen
+RAG dataset generator
