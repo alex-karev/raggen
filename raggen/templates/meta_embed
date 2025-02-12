@@ -1,0 +1,7 @@
+{%- if metadata %}
+{% for key, value in metadata.items() %} 
+{{ key }}: {{ value }}
+{%- endfor %}
+{%- endif %}
+
+{{ text }}
