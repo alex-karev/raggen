@@ -1,8 +1,11 @@
-from typing import Optional, Union, Literal
+from typing import Optional, Union, Literal, List
 import os
 from pathlib import Path
 import hashlib
 import json
+import shutil
+from dataclasses import asdict
+from .models import RAGDocument
 
 
 # Abstraction for managing cache
@@ -47,7 +50,8 @@ class CacheManager:
             with open(cache_path, "r") as f:
                 output = f.read()
             if format == "json":
-                return json.loads(output)
+                data = json.loads(output)
+                output = [RAGDocument(**x) for x in data]
             return output
 
     # Save to cache
@@ -57,7 +61,7 @@ class CacheManager:
         *args,
         path: Optional[str] = None,
         text: Optional[str] = None,
-        data: Union[str, list],
+        data: Union[str, List[RAGDocument]],
     ) -> None:
         if not self.cache_dir or not (path or text):
             return None
@@ -66,6 +70,16 @@ class CacheManager:
         cache_path = self.cache_dir / cache_type / f"{filename}.{format}"
         with open(cache_path, "w") as f:
             if format == "json":
-                f.write(json.dumps(data))
+                new_data = [asdict(x) for x in data]
+                f.write(json.dumps(new_data))
             else:
                 f.write(data)
+
+    # Clean cache
+    def clean(self, cache_type: Optional[Literal["convert", "process", "rag"]] = None):
+        if cache_type:
+            shutil.rmtree(self.cache_dir / cache_type)
+            os.makedirs(self.cache_dir / cache_type, exist_ok=True)
+        else:
+            shutil.rmtree(self.cache_dir)
+            os.makedirs(self.cache_dir)

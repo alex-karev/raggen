@@ -1,5 +1,6 @@
 from typing import Literal, Optional, List, Any
 from jinja2 import Template, Environment, PackageLoader
+from .models import RAGDocument
 
 # Define constants
 DEFAULT_TEMPLATE = Environment(
@@ -26,27 +27,27 @@ class MetadataManager:
         )
 
     # Embed metadata to text fragments
-    def embed_metadata(self, documents: List[dict]) -> List[dict]:
+    def embed_metadata(self, documents: List[RAGDocument]) -> List[RAGDocument]:
         for doc in documents:
-            if not "metadata" in doc or not doc["metadata"]:
+            if not doc.metadata:
                 continue
             metadata = {
                 self.field_names[key] if key in self.field_names else key: value
-                for key, value in doc["metadata"].items()
+                for key, value in doc.metadata.items()
             }
-            new_text = self.template.render(text=doc["text"], metadata=metadata)
-            doc["text"] = new_text.strip()
-            if "length" in doc and self.encoder:
-                doc["length"] = len(self.encoder.encode(doc["text"]))
+            new_text = self.template.render(text=doc.text, metadata=metadata)
+            doc.text = new_text.strip()
+            if doc.length != None and self.encoder:
+                doc.length = len(self.encoder.encode(doc.text))
         return documents
 
     # Add custom metadata
-    def add_metadata(self, documents: List[dict], metadata: dict) -> List[dict]:
+    def add_metadata(self, documents: List[RAGDocument], metadata: dict) -> List[RAGDocument]:
         for doc in documents:
             if self.custom_meta_placement == "before":
                 new_meta = metadata.copy()
-                new_meta.update(doc["metadata"])
-                doc["metadata"] = new_meta
+                new_meta.update(doc.metadata)
+                doc.metadata = new_meta
             else:
-                doc["metadata"].update(metadata)
+                doc.metadata.update(metadata)
         return documents

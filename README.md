@@ -10,7 +10,7 @@ A universal tool for converting files into high-quality RAG datasets.
 - Respects tables, does not split them into chunks.
 - Supports embedding metadata directly into chunk text.
 - Supports adding custom metadata for each input.
-- Multiple input formats, standard output format.
+- Multiple outputs formats including pandas DataFrames and Langchain documents.
 - Checksum-based result caching.
 
 ## Supported formats
@@ -29,7 +29,7 @@ pip install raggen
 ## Usage
 
 ```python
-from raggen import RAGGen
+from raggen import RAGGen, RAGInput
 
 # Initialize RAGGen
 gen = RAGGen(cache_dir="cache")
@@ -38,13 +38,13 @@ gen = RAGGen(cache_dir="cache")
 inputs = ["sample1.pdf", "sample2.html", "sample3.md"]
 
 # Input with custom metadata
-inputs.append({"path": "sample4.docx", "metadata": {"title": "Doc title"}})
+inputs.append(RAGInput(
+    path = "sample4.docx",
+    metadata = {"title": "Doc title"}
+))
 
 # Generate RAG dataset as list
-data = gen(inputs)
-
-# Generate RAG dataset as pandas DataFrame
-data = gen.generate_dataset(inputs)
+data = gen(inputs, output_format="df", flatten=True)
 ```
 
 ## TODO

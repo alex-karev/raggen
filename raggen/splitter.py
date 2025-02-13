@@ -2,6 +2,8 @@ from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
 )
+from typing import List, Tuple
+from .models import RAGDocument
 import tiktoken
 import re
 
@@ -35,7 +37,7 @@ class MarkdownSplitter:
         )
 
     # Extract tables and replace them with placeholders
-    def extract_tables(self, text: str) -> str:
+    def extract_tables(self, text: str) -> Tuple[str, List[str]]:
         tables = TABLE_PATTERN.findall(text)
         tables = [x[0].strip() for x in tables]
         for i, table in enumerate(tables):
@@ -43,25 +45,25 @@ class MarkdownSplitter:
         return text, tables
 
     # Restore extracted tables in all splits
-    def _restore_tables(self, splits: list[dict], tables: list[str]):
+    def _restore_tables(self, splits: List[RAGDocument], tables: List[str]):
         table_tags = [f"{{table_{i}}}" for i in range(len(tables))]
         for split in splits:
             for i, tag in enumerate(table_tags):
-                if tag in split["text"]:
-                    split["text"] = split["text"].replace(tag, f"\n{tables[i]}\n")
+                if tag in split.text:
+                    split.text = split.text.replace(tag, f"\n{tables[i]}\n")
 
     # Split markdown document
-    def __call__(self, text: str) -> list[dict]:
+    def __call__(self, text: str) -> List[RAGDocument]:
         if self.preserve_tables:
             text, tables = self.extract_tables(text)
         md_header_splits = self.markdown_splitter.split_text(text)
         splits = self.text_splitter.split_documents(md_header_splits)
         splits = [
-            {
-                "metadata": x.metadata,
-                "text": x.page_content,
-                "length": len(self.encoder.encode(x.page_content)),
-            }
+            RAGDocument(
+                text=x.page_content,
+                metadata=x.metadata if x.metadata else None,
+                length=len(self.encoder.encode(x.page_content)),
+            )
             for x in splits
         ]
         if self.preserve_tables:

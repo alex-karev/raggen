@@ -11,10 +11,14 @@ from marker.output import text_from_rendered
 from tqdm import tqdm
 from html2text import html2text
 import mammoth
+import itertools
+from dataclasses import asdict
+from langchain_core.documents import Document
 from .splitter import MarkdownSplitter
 from .header_normalizer import HeaderNormalizer
 from .cache_manager import CacheManager
 from .metadata_manager import MetadataManager
+from .models import RAGDocument, RAGInput
 
 
 # Rag generator
@@ -56,7 +60,7 @@ class RAGGen:
             template=template,
             custom_meta_placement=custom_meta_placement,
             encoder=self.splitter.encoder,
-            field_names=field_names
+            field_names=field_names,
         )
         self.field_names = field_names
         self.embed_meta = embed_meta
@@ -74,7 +78,7 @@ class RAGGen:
     # Process markdown texts
     def _process_markdown_text(
         self, text: str, metadata: Optional[dict] = None
-    ) -> List[dict]:
+    ) -> List[RAGDocument]:
         full_text = text
         full_text += json.dumps(metadata) if metadata and self.embed_meta else ""
         full_text += json.dumps(self.field_names) if self.embed_meta else ""
@@ -96,7 +100,7 @@ class RAGGen:
     # Process markdown files
     def _process_markdown_file(
         self, path: str, metadata: Optional[dict] = None
-    ) -> List[dict]:
+    ) -> List[RAGDocument]:
         with open(path, "r") as f:
             text = f.read()
         splits = self._process_markdown_text(text, metadata)
@@ -116,7 +120,7 @@ class RAGGen:
     # Process PDF
     def _process_pdf_file(
         self, path: str, metadata: Optional[dict] = None
-    ) -> List[dict]:
+    ) -> List[RAGDocument]:
         text = self.cache.load("convert", path=path)
         if not text:
             converter = self._load_pdf_converter()
@@ -129,7 +133,7 @@ class RAGGen:
     # Process HTML
     def _process_html_file(
         self, path: str, metadata: Optional[dict] = None
-    ) -> List[dict]:
+    ) -> List[RAGDocument]:
         text = self.cache.load("convert", path=path)
         if not text:
             with open(path, "r") as f:
@@ -142,7 +146,7 @@ class RAGGen:
     # Process word
     def _process_docx_file(
         self, path: str, metadata: Optional[dict] = None
-    ) -> List[dict]:
+    ) -> List[RAGDocument]:
         text = self.cache.load("convert", path=path)
         if not text:
             with open(path, "rb") as f:
@@ -152,7 +156,7 @@ class RAGGen:
         return splits
 
     # Process any type of file
-    def _process(self, path: str, metadata: Optional[dict] = None) -> List[dict]:
+    def _process(self, path: str, metadata: Optional[dict] = None) -> List[RAGDocument]:
         try:
             if not os.path.exists(path):
                 raise Exception(f"File not found '{path}'")
@@ -174,42 +178,65 @@ class RAGGen:
 
     # Process a single file or a set of files
     def __call__(
-        self, documents: Union[list[Union[dict, str]], dict, str]
-    ) -> Union[List[dict], List[List[dict]], None]:
+        self,
+        documents: Union[list[Union[RAGInput, str]], RAGInput, str],
+        output_format: Literal["doc", "dict", "df", "langchain"] = "doc",
+        flatten: bool = False,
+    ) -> Union[
+        List[RAGDocument],
+        List[List[RAGDocument]],
+        List[Document],
+        List[List[Document]],
+        List[dict],
+        List[List[dict]],
+        pd.DataFrame,
+    ]:
+        # Standardize input
         output_list = True
-        if isinstance(documents, dict):
+        if isinstance(documents, RAGInput):
             documents = [documents]
             output_list = False
         elif isinstance(documents, str):
-            documents = [{"path": documents, "metadata": {}}]
+            documents = [RAGInput(path=documents, metadata={})]
             output_list = False
         data = []
+        # Process documents
         for doc in tqdm(documents, desc="Processing documents", total=len(documents)):
-            if isinstance(doc, dict) and "metadata" in doc:
-                metadata = doc["metadata"]
+            if isinstance(doc, RAGInput) and doc.metadata:
+                metadata = doc.metadata
             else:
                 metadata = {}
-            path = doc if isinstance(doc, str) else doc["path"]
+            path = doc if isinstance(doc, str) else doc.path
             splits = self._process(path, metadata)
             if splits:
                 data.append(splits)
+        # Convert to dict
+        if output_format == "dict":
+            data = [[asdict(x) for x in doc] for doc in data]
+        # Convert to langchain format
+        elif output_format == "langchain":
+            data = [
+                [
+                    Document(
+                        page_content=x.text, metadata=x.metadata if x.metadata else None
+                    )
+                    for x in doc
+                ]
+                for doc in data
+            ]
+        # Convert to pandas dataframes
+        elif output_format == "df":
+            data = [pd.DataFrame([asdict(x) for x in doc]) for doc in data]
+        # Flattent outputs
+        if flatten and output_list:
+            if output_format != "df":
+                data = list(itertools.chain.from_iterable(data))
+            else:
+                data = pd.concat(data)
+        # Output
         if output_list:
             return data
         elif len(data) != 0:
             return data[0]
         else:
             return None
-
-    # Generate rag dataset
-    def generate_dataset(
-        self, documents: Union[list[Union[dict, str]], dict, str]
-    ) -> pd.DataFrame:
-        doc_data = self.__call__(documents)
-        if not doc_data:
-            return None
-        data = []
-        for index, doc in enumerate(doc_data):
-            for chunk in doc:
-                chunk["domain"] = index
-            data.extend(doc)
-        return pd.DataFrame(data)
