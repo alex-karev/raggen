@@ -75,37 +75,6 @@ class RAGGen:
         )
         self.pdf_converter = None
 
-    # Process markdown texts
-    def _process_markdown_text(
-        self, text: str, metadata: Optional[dict] = None
-    ) -> List[RAGDocument]:
-        full_text = text
-        full_text += json.dumps(metadata) if metadata and self.embed_meta else ""
-        full_text += json.dumps(self.field_names) if self.embed_meta else ""
-        documents = self.cache.load("rag", text=full_text)
-        if documents:
-            return documents
-        processed_text = self.cache.load("process", text=text)
-        if not processed_text:
-            processed_text = self.header_normalizer(text)
-            self.cache.save("process", text=text, data=processed_text)
-        documents = self.splitter(processed_text)
-        if metadata:
-            documents = self.metadata_manager.add_metadata(documents, metadata)
-        if self.embed_meta:
-            documents = self.metadata_manager.embed_metadata(documents)
-        self.cache.save("rag", text=full_text, data=documents)
-        return documents
-
-    # Process markdown files
-    def _process_markdown_file(
-        self, path: str, metadata: Optional[dict] = None
-    ) -> List[RAGDocument]:
-        with open(path, "r") as f:
-            text = f.read()
-        splits = self._process_markdown_text(text, metadata)
-        return splits
-
     # Load PDF converter into memory
     def _load_pdf_converter(self) -> PdfConverter:
         if not self.pdf_converter:
@@ -117,64 +86,80 @@ class RAGGen:
             )
         return self.pdf_converter
 
-    # Process PDF
-    def _process_pdf_file(
-        self, path: str, metadata: Optional[dict] = None
-    ) -> List[RAGDocument]:
-        text = self.cache.load("convert", path=path)
-        if not text:
-            converter = self._load_pdf_converter()
-            rendered = converter(path)
-            text, _, _ = text_from_rendered(rendered)
-            self.cache.save("convert", path=path, data=text)
-        splits = self._process_markdown_text(text, metadata)
-        return splits
+    # Pre-process markdown text
+    def _preprocess_markdown_text(self, text: str) -> str:
+        processed_text = self.cache.load("process", text=text)
+        if not processed_text:
+            processed_text = self.header_normalizer(text)
+            self.cache.save("process", text=text, data=processed_text)
+        return processed_text
 
-    # Process HTML
-    def _process_html_file(
-        self, path: str, metadata: Optional[dict] = None
+    # Split markdown text
+    def _split_markdown_text(
+        self, text: str, metadata: Optional[dict] = None
     ) -> List[RAGDocument]:
-        text = self.cache.load("convert", path=path)
-        if not text:
-            with open(path, "r") as f:
-                text = f.read()
-            text = html2text(text)
-            self.cache.save("convert", path=path, data=text)
-        splits = self._process_markdown_text(text, metadata)
-        return splits
+        full_text = text
+        full_text += json.dumps(metadata) if metadata and self.embed_meta else ""
+        full_text += json.dumps(self.field_names) if self.embed_meta else ""
+        documents = self.cache.load("rag", text=full_text)
+        if documents:
+            return documents
+        documents = self.splitter(text)
+        if metadata:
+            documents = self.metadata_manager.add_metadata(documents, metadata)
+        if self.embed_meta:
+            documents = self.metadata_manager.embed_metadata(documents)
+        self.cache.save("rag", text=full_text, data=documents)
+        return documents
 
-    # Process word
-    def _process_docx_file(
-        self, path: str, metadata: Optional[dict] = None
-    ) -> List[RAGDocument]:
+    # Convert any type of file to markdown text
+    def _convert_file(self, path: str) -> Union[str, None]:
+        # Try loading from cache
         text = self.cache.load("convert", path=path)
-        if not text:
-            with open(path, "rb") as f:
-                text = mammoth.convert_to_markdown(f)
-            self.cache.save("convert", path=path, data=text)
-        splits = self._process_markdown_text(text, metadata)
-        return splits
-
-    # Process any type of file
-    def _process(self, path: str, metadata: Optional[dict] = None) -> List[RAGDocument]:
+        if text:
+            return text
+        # Parse files
         try:
             if not os.path.exists(path):
                 raise Exception(f"File not found '{path}'")
             extension = Path(path).suffix.lower()
+            # Markdown
             if extension == ".md":
-                documents = self._process_markdown_file(path, metadata)
+                with open(path, "r") as f:
+                    text = f.read()
+            # PDF
             elif extension == ".pdf":
-                documents = self._process_pdf_file(path, metadata)
+                converter = self._load_pdf_converter()
+                rendered = converter(path)
+                text, _, _ = text_from_rendered(rendered)
+            # HTML
             elif extension in [".html", ".htm"]:
-                documents = self._process_html_file(path, metadata)
+                with open(path, "r") as f:
+                    text = f.read()
+                text = html2text(text)
+            # Word
             elif extension in [".doc", ".docx"]:
-                documents = self._process_docx_file(path, metadata)
+                with open(path, "rb") as f:
+                    text = mammoth.convert_to_markdown(f)
+            # Unknown format
             else:
                 raise Exception(f"Unsupported format '{extension}' for file '{path}'")
-            return documents
+            # Save to cache and return
+            self.cache.save("convert", path=path, data=text)
+            return text
+        # Conversion errors
         except Exception as e:
             self.log.error(e, exc_info=True)
+            return None
+
+    # Full document processing pipeline
+    def _process(self, path: str, metadata: Optional[dict] = None) -> List[RAGDocument]:
+        text = self._convert_file(path)
+        if not text:
             return []
+        text = self._preprocess_markdown_text(text)
+        documents = self._split_markdown_text(text, metadata)
+        return documents
 
     # Process a single file or a set of files
     def __call__(
